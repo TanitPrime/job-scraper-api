@@ -1,0 +1,24 @@
+{
+  "design": {
+    "logos": {
+      "en": ["logo design", "brand identity design"],
+      "fr": ["design de logo", "identité visuelle"]
+    },
+    "brochures": {
+      "en": ["brochure design", "print collateral"],
+      "fr": ["design de brochure", "document imprimé"]
+    }
+  },
+  "web": {
+    "react": {
+      "en": ["react developer", "frontend react"],
+      "fr": ["développeur react", "frontend react"]
+    }
+  },
+  "language_services": {
+    "translation": {
+      "en": ["english to french translator", "technical translation"],
+      "fr": ["traducteur anglais-français", "traduction technique"]
+    }
+  }
+}
