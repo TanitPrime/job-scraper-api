@@ -1,0 +1,18 @@
+version: "3.9"
+services:
+  rabbit:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"   #shttp://localhost:15672
+  worker:
+    build: .
+    depends_on: [rabbit]
+    environment:
+      - CELERY_BROKER=pyamqp://guest@rabbit//
+    command: celery -A tasks worker --loglevel=info
+  web:
+    build: .
+    depends_on: [rabbit]
+    ports:
+      - "8000:8000"
