@@ -21,7 +21,7 @@ class BaseScraper(ABC):
     name: str
 
     @abstractmethod
-    def search_single(self, keyword: str, region: str = "") -> JobCard:
+    def search_single(self, keyword: str, region: str = "") -> Job:
         """Return exactly one JobCard for the first hit."""
         return None
     
@@ -30,7 +30,7 @@ class BaseScraper(ABC):
         return None
 
     @abstractmethod
-    def hash_job(self, title: str, company_name: str, location: Job.location, **kwargs: str) -> str:
+    def hash_job(self, job: Job, **kwargs: str) -> str:
         """
         Make determinestic job ID using job data
         args:
@@ -39,6 +39,10 @@ class BaseScraper(ABC):
             location: Job location if specified,
             **kwarfs: Any site specific identifying data
         """
+        # Extract text from Job card
+        title = job.title
+        location = job.location
+        company_name = job.company
         # Normalize text
         title = self._normalize_text(title)
         company_name = self._normalize_text(company_name)
