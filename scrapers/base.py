@@ -4,14 +4,14 @@ import hashlib
 
 
 @dataclass
-class JobCard:
+class Job:
     # Metadata
     job_id: str
     title: str
     company: str
     location: str
     detail_url: str
-    proximity: enumerate["on-site", "hybrid", "remote"]
+    basis: enumerate["on-site", "hybrid", "remote"]
     snippet: str = ""           
     # JD
     description: str = ""       
@@ -30,7 +30,7 @@ class BaseScraper(ABC):
         return None
 
     @abstractmethod
-    def hash_job(self, title: str, company_name: str, location: JobCard.location, **kwargs: str) -> str:
+    def hash_job(self, title: str, company_name: str, location: Job.location, **kwargs: str) -> str:
         """
         Make determinestic job ID using job data
         args:
@@ -46,3 +46,24 @@ class BaseScraper(ABC):
         text = title + company_name + location + kwargs
         # Hash the string and return
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    
+    @abstractmethod
+    def is_stale(self, batch: list[Job], threshold: float, connection) -> bool:
+        """
+        Calculate batch freshness by comparing it with existing jobs in db
+        args:
+            batch: List of jobs
+            trehshold: what ratio does the batch has to be duplicated for the batch to be considered stale
+            connection: Firebase connection
+        """
+        # Connect to db
+        try:
+            print("todo")
+            #dupes = np.sum([1  if job exists else 0 for job in batch]) / len(batch)
+            # if dupes => threshold:
+            #   return True
+            # else:
+            #   return False
+        except Exception as e:
+            print(e)
+            # log error or flag for retry
