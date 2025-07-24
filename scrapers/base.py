@@ -1,73 +1,57 @@
+# scrapers/base.py
 from abc import ABC, abstractmethod
+from typing import List, Dict, Any
 from dataclasses import dataclass
 import hashlib
+import re
 
 
 @dataclass
 class Job:
-    # Metadata
-    job_id: str
-    title: str
+    """Universal job posting representation."""
+    source: str               # e.g. "linkedin"
+    source_id: str            # raw numeric or slug from the source
     company: str
+    title: str
+    description: str
     location: str
-    detail_url: str
-    basis: enumerate["on-site", "hybrid", "remote"]
-    snippet: str = ""           
-    # JD
-    description: str = ""       
+    url: str
+    metadata: Dict[str, Any]  # flexible key/value extras
 
 
 class BaseScraper(ABC):
-    name: str
+    """Abstract scraper every concrete scraper must implement."""
+
+    @property
+    @abstractmethod
+    def source(self) -> str:
+        """Return the lowercase source name (e.g. 'linkedin')."""
 
     @abstractmethod
-    def search_single(self, keyword: str, region: str = "") -> Job:
-        """Return exactly one JobCard for the first hit."""
-        return None
-    
-    def _normalize_text(self, text: list[str]) -> str:
-        """Normalize headers like job title and company name"""
-        return None
+    def scrape_batch(self, **kwargs) -> List[Job]:
+        """
+        Scrape a batch of job postings.
+        Concrete classes decide how to paginate, filter, etc.
+        """
 
-    @abstractmethod
-    def hash_job(self, job: Job, **kwargs: str) -> str:
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def build_deterministic_id(raw_parts: List[str]) -> str:
         """
-        Make determinestic job ID using job data
-        args:
-            title: Job title,
-            company_name: Name of the job poster,
-            location: Job location if specified,
-            **kwarfs: Any site specific identifying data
+        Create a 16-byte deterministic ID from any ordered list of strings.
+        Guarantees consistent length across all scrapers.
         """
-        # Extract text from Job card
-        title = job.title
-        location = job.location
-        company_name = job.company
-        # Normalize text
-        title = self._normalize_text(title)
-        company_name = self._normalize_text(company_name)
-        # Make a string to hash
-        text = title + company_name + location + kwargs
-        # Hash the string and return
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
-    
-    @abstractmethod
-    def is_stale(self, batch: list[Job], threshold: float, connection) -> bool:
-        """
-        Calculate batch freshness by comparing it with existing jobs in db
-        args:
-            batch: List of jobs
-            trehshold: what ratio does the batch has to be duplicated for the batch to be considered stale
-            connection: Firebase connection
-        """
-        # Connect to db
-        try:
-            print("todo")
-            #dupes = np.sum([1  if job exists else 0 for job in batch]) / len(batch)
-            # if dupes => threshold:
-            #   return True
-            # else:
-            #   return False
-        except Exception as e:
-            print(e)
-            # log error or flag for retry
+        payload = "|".join(str(p).strip().lower() for p in raw_parts)
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return digest[:16]
+
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """Lightweight text normalizer for relevance scoring."""
+        if not text:
+            return ""
+        text = re.sub(r"\s+", " ", text)
+        return text.strip().lower()
