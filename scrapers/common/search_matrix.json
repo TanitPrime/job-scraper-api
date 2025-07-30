@@ -1,0 +1,13 @@
+{
+  "CATEGORY_KEYWORDS": {
+      "backend":   ["backend", "server", "api", "nodejs", "django", "spring"],
+      "frontend":  ["frontend", "react", "vue", "css", "javascript"],
+      "ai":        ["ai", "machine learning", "nlp", "transformers", "pytorch"],
+      "mobile":    ["mobile", "android", "ios", "flutter", "react-native"]
+  },
+
+  "LOCATIONS":[
+      "Tunisia",
+      "France"
+  ]
+}
