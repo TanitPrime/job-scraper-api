@@ -20,7 +20,9 @@ from scrapers.linkedin.query_builder import build_boolean_query
 from scrapers.common.browser import get_headful_driver
 from scrapers.common.selectors import LinkedInSelectors
 from scrapers.common.firebase_client import get_firestore_client
-from scrapers.common.relevance import cosine_similarity
+from scrapers.common.relevance import token_fuzzy
+from scrapers.common.search_matrix import load_matrix
+
 
 
 class ReLoginRequired(Exception):
@@ -67,11 +69,9 @@ class LinkedInScraper(BaseScraper):
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
-
     def scrape_batch(
         self,
-        locations: List[str],
-        categories: List[str],
+        matrix = load_matrix(),
         slice_size: int = 50,
         max_pages: int = 3,
         freshness_thresh: float = 0.8,
@@ -80,42 +80,52 @@ class LinkedInScraper(BaseScraper):
     ) -> List[LinkedInJob]:
         page = self._start_browser()
         all_new_jobs: List[LinkedInJob] = []
+        
+        query = build_boolean_query()
+        url = "https://www.linkedin.com/jobs/search?" + urlencode(
+            {
+                "geoId": "92000000", # Set linkedin to global to expose all jobs
+                "keywords": query, "f_JT": "F" # then filter down to locations and categories according to matrix
+            }
+        )
+        page.goto(url, timeout=30000)
+        page.wait_for_selector(
+            LinkedInSelectors.job_card_container, timeout=15000
+        )
 
-        for loc in locations:
-            query = build_boolean_query(categories, loc)
-            url = "https://www.linkedin.com/jobs/search?" + urlencode(
-                {"keywords": query, "f_JT": "F"}
-            )
-            page.goto(url, timeout=30000)
-            page.wait_for_selector(
-                LinkedInSelectors.job_card_container, timeout=15000
-            )
+        seen_so_far = 0
+        for _ in range(max_pages):
+            # Reveal all jobs
+            self._scroll_to_load_all_jobs(page)
+            cards = page.locator(LinkedInSelectors.job_card_container).all()[
+                seen_so_far : seen_so_far + slice_size
+            ]
+            if not cards:
+                break
 
-            seen_so_far = 0
-            for _ in range(max_pages):
-                cards = page.locator(LinkedInSelectors.job_card_container).all()[
-                    seen_so_far : seen_so_far + slice_size
-                ]
-                if not cards:
-                    break
+            slice_jobs = [
+                self._extract_single_job(card, matrix) for card in cards
+            ]
+            #---- checking if jobs were successfully scraped-----
+            if slice_jobs:
+                print(f"Successfully scraped {len(slice_jobs)} jobs")
+            ids = [j.id for j in slice_jobs]
 
-                slice_jobs = [
-                    self._extract_single_job(card, loc, categories) for card in cards
-                ]
-                ids = [j.id for j in slice_jobs]
+            # ---- early-exit checks ----
 
-                # ---- early-exit checks ----
-                existing = {
-                    snap.id
-                    for snap in self._db.collection("jobs").get_all(
-                        [self._db.collection("jobs").document(i) for i in ids]
-                    )
-                    if snap.exists
-                }
+            # Grabbing existing jobs
+            refs = [self._db.collection("jobs").document(i) for i in ids]
+            docs = self._db.get_all(refs)         
+            existing = {snap.id for snap in docs if snap.exists}
+            total_docs = self._db.collection("jobs").count().get()[0][0].value
+            if total_docs == 0:
+                # fallback when db is empty
+                new_slice = slice_jobs
+            else:
                 fresh_ratio = len(existing) / len(slice_jobs)
 
                 rel_scores = [
-                    cosine_similarity(j.description, categories) for j in slice_jobs
+                    token_fuzzy(j.description, list(matrix["CATEGORY_KEYWORDS"].keys())) for j in slice_jobs
                 ]
                 avg_rel = sum(rel_scores) / len(rel_scores)
 
@@ -123,17 +133,17 @@ class LinkedInScraper(BaseScraper):
                     # stop scanning further for this location
                     break
 
-                # keep only truly new jobs
-                new_slice = [j for j in slice_jobs if j.id not in existing]
-                all_new_jobs.extend(new_slice)
+            # keep only truly new jobs
+            new_slice = [j for j in slice_jobs if j.id not in existing]
+            all_new_jobs.extend(new_slice)
 
-                seen_so_far += len(cards)
-                time.sleep(random.uniform(delay * 0.8, delay * 1.2))
+            seen_so_far += len(cards)
+            time.sleep(random.uniform(delay * 0.8, delay * 1.2))
 
-                # next page
-                if not self._has_next_page(page):
-                    break
-                self._go_next(page)
+            # next page
+            if not self._has_next_page(page):
+                break
+            self._go_next(page)
 
         self._close_browser()
         return all_new_jobs
@@ -142,35 +152,66 @@ class LinkedInScraper(BaseScraper):
     # Page helpers
     # ------------------------------------------------------------------
 
+    def _scroll_to_load_all_jobs(self, page: Page, scroll_down_attempts: int = 15) -> None:
+        """Scrolls the job cards sidebar object until all jobs are loaded."""
+        previous_count = 0
+        # Directly select the first child div, just like your browser code
+        sidebar_element = page.locator(LinkedInSelectors.sidebar).element_handle()
+        if not sidebar_element:
+            print("❌ first div child not found")
+            return
+
+        for attempt in range(scroll_down_attempts):
+            page.evaluate(
+                "el => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })",
+                sidebar_element
+            )
+            print(f"✅ Scrolled sidebar (attempt {attempt+1})")
+            time.sleep(1.5)
+            cards = page.locator(LinkedInSelectors.job_card_container).all()
+            if len(cards) == previous_count:
+                print("No new jobs loaded after scrolling.")
+                break
+            previous_count = len(cards)
+
+
     def _extract_single_job(
-        self, card, location: str, categories: List[str]
+        self, card , matrix: dict[str, list[str]]
     ) -> LinkedInJob:
+        # Get linkedin internal ID
         linkedin_id = card.get_attribute(LinkedInSelectors.job_id_attr) or ""
-        title = card.locator(LinkedInSelectors.title).inner_text(timeout=2000).strip()
-        company = (
-            card.locator(LinkedInSelectors.company).inner_text(timeout=2000).strip()
-        )
+        # Get title
+        title = self._safe_extract(card, LinkedInSelectors.title)
+        # Get company
+        company = self._safe_extract(card,LinkedInSelectors.company)
+        # Get location
+        location = self._safe_extract(card,LinkedInSelectors.location)
 
-        # build deterministic global id
-        job_id = self.build_deterministic_id([self.source, linkedin_id, company, title])
 
-        # optional deep fetch of description
+        # deep fetch of description
         desc = ""
         try:
             card.click()
             card.page.wait_for_selector(
-                LinkedInSelectors.description, timeout=5000
+                LinkedInSelectors.description, timeout=8000
             )
             desc = (
                 card.page.locator(LinkedInSelectors.description)
                 .inner_text()
                 .strip()
             )
-        except Exception:
+            # Get category by calculating relevance from JD 
+            rel_scores = {cat: token_fuzzy(desc, kw_list) for cat, kw_list in matrix["CATEGORY_KEYWORDS"].items()}
+            category = max(rel_scores, key=rel_scores.get)
+
+            # TODO  extract tags from JD and save to list
+        except Exception as e:
+            print("Could not fetch JD", e)
             pass
 
         return LinkedInJob(
             source=self.source,
+            category = category,
             source_id=linkedin_id,
             company=company,
             title=title,
@@ -184,7 +225,6 @@ class LinkedInScraper(BaseScraper):
             job_function=self._safe_extract(card, LinkedInSelectors.function),
             industries=self._safe_extract(card, LinkedInSelectors.industries),
             applicant_count=self._safe_int(card, LinkedInSelectors.applicant_count),
-            id=job_id,
         )
 
     # ------------------------------------------------------------------
@@ -194,14 +234,14 @@ class LinkedInScraper(BaseScraper):
     @staticmethod
     def _safe_extract(card, sel: str) -> str:
         try:
-            return card.locator(sel).inner_text(timeout=1000).strip()
+            return card.locator(sel).first.inner_text(timeout=1000).strip()
         except Exception:
             return ""
 
     @staticmethod
     def _safe_int(card, sel: str) -> int:
         try:
-            txt = card.locator(sel).inner_text(timeout=1000)
+            txt = card.locator(sel).fitst.inner_text(timeout=1000)
             return int("".join(filter(str.isdigit, txt)))
         except Exception:
             return 0
