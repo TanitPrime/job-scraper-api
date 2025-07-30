@@ -1,7 +1,7 @@
 # scrapers/base.py
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import re
 
@@ -9,14 +9,24 @@ import re
 @dataclass
 class Job:
     """Universal job posting representation."""
-    source: str               # e.g. "linkedin"
-    source_id: str            # raw numeric or slug from the source
+    source: str
+    category: str  # New field for job category
+    source_id: str
     company: str
     title: str
     description: str
     location: str
     url: str
-    metadata: Dict[str, Any]  # flexible key/value extras
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    id: str = field(init=False)  # deterministic global ID
+
+
+    # Post init to automatically generate ID
+    def __post_init__(self) -> None:
+        from scrapers.base import BaseScraper
+        self.id = BaseScraper.build_deterministic_id(
+            [self.source, self.source_id, self.company, self.title]
+        )
 
 
 class BaseScraper(ABC):
