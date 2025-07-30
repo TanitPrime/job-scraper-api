@@ -52,3 +52,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+#firebase cert
+scrapers/common/smartech-108ae-firebase-adminsdk-fbsvc-34e0e4da66.json
