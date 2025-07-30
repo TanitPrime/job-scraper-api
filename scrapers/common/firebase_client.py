@@ -12,7 +12,7 @@ from pathlib import Path
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-_CERT_FILE = Path(__file__).with_name("smartech-firebase-key.json")
+_CERT_FILE = Path(__file__).with_name("smartech-108ae-firebase-adminsdk-fbsvc-34e0e4da66.json")
 
 # ------------------------------------------------------------------
 # Lazy singleton
