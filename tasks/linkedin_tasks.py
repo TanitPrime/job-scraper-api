@@ -19,8 +19,6 @@ class LinkedInScrapeTask(Task):
 
     def run(
         self,
-        locations: List[str],
-        categories: List[str],
         slice_size: int = 50,
         max_pages: int = 3,
         freshness_thresh: float = 0.8,
@@ -40,8 +38,6 @@ class LinkedInScrapeTask(Task):
                 proxy=None,  # override via env if needed
             )
             jobs = scraper.scrape_batch(
-                locations=locations,
-                categories=categories,
                 slice_size=slice_size,
                 max_pages=max_pages,
                 freshness_thresh=freshness_thresh,
