@@ -46,8 +46,10 @@ class LinkedInScraper(BaseScraper):
         self.headless = headless
         self._browser: Browser | None = None
         self._page: Page | None = None
-        self._db = get_firestore_client()
+        self._db = get_firestore_client() # Firestore client for database operations
         self.matrix = matrix
+        self.make_status() # Create status table if it doesn't exist
+        self.set_status(self.source, "OFF") # Set initial status to OFF
 
     # ------------------------------------------------------------------
     # Browser lifecycle
@@ -79,6 +81,8 @@ class LinkedInScraper(BaseScraper):
         relevance_thresh: float = 0.3,
         delay: float = 6.0,
     ) -> List[LinkedInJob]:
+        # Set scraper status to ON
+        self.set_status(self.source, "ON")
         page = self._start_browser()
         all_new_jobs: List[LinkedInJob] = []
         
@@ -89,12 +93,11 @@ class LinkedInScraper(BaseScraper):
                 "keywords": query, "f_JT": "F" # then filter down to locations and categories according to matrix
             }
         )
-        page.goto(url, timeout=30000)
+        page.goto(url, timeout=50000)
         page.wait_for_selector(
             LinkedInSelectors.job_card_container, timeout=15000
         )
-        # Set scraper status to ON
-        self.set_status(self.source, "ON")
+
 
         seen_so_far = 0
         for _ in range(max_pages):
@@ -152,7 +155,7 @@ class LinkedInScraper(BaseScraper):
                 # Set scraper status to OFF
                 self.set_status(self.source, "OFF")
                 break
-            self._go_next(page)
+            self._go_next(page, timeout = 5000)
 
         self._close_browser()
         # Set scraper status to OFF
@@ -263,11 +266,15 @@ class LinkedInScraper(BaseScraper):
         return count > 0
 
     @staticmethod
-    def _go_next(page: Page):
+    def _go_next(page: Page, timeout = 30000):
         next_btn = page.locator(LinkedInSelectors.next_page)
         if next_btn.count() > 0:
             print("Clicking next page button.")
             next_btn.click()
-            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(
+                LinkedInSelectors.job_card_container,
+                state="attached",
+                timeout=timeout
+                ) # Wait for job cards to load after clicking next     
         else:
             print("No next page button to click.")

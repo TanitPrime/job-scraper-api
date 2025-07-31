@@ -20,7 +20,6 @@ class Job:
     metadata: Dict[str, Any] = field(default_factory=dict)
     id: str = field(init=False)  # deterministic global ID
 
-
     # Post init to automatically generate ID
     def __post_init__(self) -> None:
         # Generate a deterministic ID based on source, source_id, company, and title
@@ -28,10 +27,7 @@ class Job:
         self.id = BaseScraper.build_deterministic_id(
             [self.source, self.source_id, self.company, self.title]
         )
-        # Create scraper_control.db
-        BaseScraper.make_status()
-        # Set status to OFF
-        BaseScraper.set_status(self.source, "OFF")
+
 
 
 class BaseScraper(ABC):
@@ -83,7 +79,7 @@ class BaseScraper(ABC):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS scraper_status (
                 source TEXT PRIMARY KEY,
-                status TEXT CHECK( pType IN ('ON','OFF') )   NOT NULL DEFAULT 'OFF',
+                status TEXT CHECK( status IN ('ON','OFF') )   NOT NULL DEFAULT 'OFF',
                 last_run TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -102,6 +98,6 @@ class BaseScraper(ABC):
             INSERT INTO scraper_status (source, status)
             VALUES (?, ?)
             ON CONFLICT(source) DO UPDATE SET status = ?, last_run = CURRENT_TIMESTAMP
-        """, (source, status))
+        """, (source, status, status))
         conn.commit()
         conn.close()
