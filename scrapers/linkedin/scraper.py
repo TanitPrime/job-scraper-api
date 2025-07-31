@@ -38,6 +38,7 @@ class LinkedInScraper(BaseScraper):
         storage_path: str,
         proxy: str | None = None,
         headless: bool = False,
+        matrix: dict[str, list[str]] = load_matrix(),
     ):
         self.cookies_path = cookies_path
         self.storage_path = storage_path
@@ -46,6 +47,7 @@ class LinkedInScraper(BaseScraper):
         self._browser: Browser | None = None
         self._page: Page | None = None
         self._db = get_firestore_client()
+        self.matrix = matrix
 
     # ------------------------------------------------------------------
     # Browser lifecycle
@@ -71,7 +73,6 @@ class LinkedInScraper(BaseScraper):
     # ------------------------------------------------------------------
     def scrape_batch(
         self,
-        matrix = load_matrix(),
         slice_size: int = 50,
         max_pages: int = 3,
         freshness_thresh: float = 0.8,
@@ -92,6 +93,8 @@ class LinkedInScraper(BaseScraper):
         page.wait_for_selector(
             LinkedInSelectors.job_card_container, timeout=15000
         )
+        # Set scraper status to ON
+        self.set_status(self.source, "ON")
 
         seen_so_far = 0
         for _ in range(max_pages):
@@ -101,10 +104,11 @@ class LinkedInScraper(BaseScraper):
                 seen_so_far : seen_so_far + slice_size
             ]
             if not cards:
-                break
+                # Raise exception
+                raise ReLoginRequired("No job cards found, likely due to login wall or expired cookies.")
 
             slice_jobs = [
-                self._extract_single_job(card, matrix) for card in cards
+                self._extract_single_job(card) for card in cards
             ]
             #---- checking if jobs were successfully scraped-----
             if slice_jobs:
@@ -114,10 +118,10 @@ class LinkedInScraper(BaseScraper):
             # ---- early-exit checks ----
 
             # Grabbing existing jobs
-            refs = [self._db.collection("jobs").document(i) for i in ids]
+            refs = [self._db.collection("linkedin_jobs").document(i) for i in ids]
             docs = self._db.get_all(refs)         
             existing = {snap.id for snap in docs if snap.exists}
-            total_docs = self._db.collection("jobs").count().get()[0][0].value
+            total_docs = self._db.collection("linked_jobs").count().get()[0][0].value
             if total_docs == 0:
                 # fallback when db is empty
                 new_slice = slice_jobs
@@ -125,12 +129,15 @@ class LinkedInScraper(BaseScraper):
                 fresh_ratio = len(existing) / len(slice_jobs)
 
                 rel_scores = [
-                    token_fuzzy(j.description, list(matrix["CATEGORY_KEYWORDS"].keys())) for j in slice_jobs
+                    token_fuzzy(j.description, list(self.matrix["CATEGORY_KEYWORDS"].keys())) for j in slice_jobs
                 ]
                 avg_rel = sum(rel_scores) / len(rel_scores)
 
                 if fresh_ratio > freshness_thresh or avg_rel < relevance_thresh:
                     # stop scanning further for this location
+                    print(f"Early exit: Freshness ratio {fresh_ratio} or relevance {avg_rel} below threshold.")
+                    # Set scraper status to OFF
+                    self.set_status(self.source, "OFF")
                     break
 
             # keep only truly new jobs
@@ -142,10 +149,14 @@ class LinkedInScraper(BaseScraper):
 
             # next page
             if not self._has_next_page(page):
+                # Set scraper status to OFF
+                self.set_status(self.source, "OFF")
                 break
             self._go_next(page)
 
         self._close_browser()
+        # Set scraper status to OFF
+        self.set_status(self.source, "OFF")
         return all_new_jobs
 
     # ------------------------------------------------------------------
@@ -176,7 +187,7 @@ class LinkedInScraper(BaseScraper):
 
 
     def _extract_single_job(
-        self, card , matrix: dict[str, list[str]]
+        self, card
     ) -> LinkedInJob:
         # Get linkedin internal ID
         linkedin_id = card.get_attribute(LinkedInSelectors.job_id_attr) or ""
@@ -201,7 +212,7 @@ class LinkedInScraper(BaseScraper):
                 .strip()
             )
             # Get category by calculating relevance from JD 
-            rel_scores = {cat: token_fuzzy(desc, kw_list) for cat, kw_list in matrix["CATEGORY_KEYWORDS"].items()}
+            rel_scores = {cat: token_fuzzy(desc, kw_list) for cat, kw_list in self.matrix["CATEGORY_KEYWORDS"].items()}
             category = max(rel_scores, key=rel_scores.get)
 
             # TODO  extract tags from JD and save to list
@@ -218,7 +229,6 @@ class LinkedInScraper(BaseScraper):
             description=desc,
             location=location,
             url=f"https://www.linkedin.com/jobs/view/{linkedin_id}/",
-            linkedin_job_id=linkedin_id,
             posted_at=self._safe_extract(card, LinkedInSelectors.posted_at),
             seniority_level=self._safe_extract(card, LinkedInSelectors.seniority),
             employment_type=self._safe_extract(card, LinkedInSelectors.emp_type),
