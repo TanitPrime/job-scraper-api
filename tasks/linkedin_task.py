@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from celery import Task
+from celery_schedule import Task
 from scrapers.linkedin.scraper import LinkedInScraper, ReLoginRequired
 from scrapers.common.firebase_client import get_firestore_client
 
