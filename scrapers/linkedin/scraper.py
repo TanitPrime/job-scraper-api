@@ -248,9 +248,16 @@ class LinkedInScraper(BaseScraper):
 
     @staticmethod
     def _has_next_page(page: Page) -> bool:
-        return page.locator(LinkedInSelectors.next_page).count() > 0
+        count = page.locator(LinkedInSelectors.next_page).count()
+        print(f"Next page button found: {count > 0}")
+        return count > 0
 
     @staticmethod
     def _go_next(page: Page):
-        page.locator(LinkedInSelectors.next_page).click()
-        page.wait_for_load_state("networkidle")
+        next_btn = page.locator(LinkedInSelectors.next_page)
+        if next_btn.count() > 0:
+            print("Clicking next page button.")
+            next_btn.click()
+            page.wait_for_load_state("networkidle")
+        else:
+            print("No next page button to click.")
