@@ -14,7 +14,6 @@ class LinkedInJob(Job):
     """
     Concrete Job subclass holding extra LinkedIn fields.
     """
-    linkedin_job_id: str = ""
     posted_at: str = ""            # ISO-8601 or "2 days ago"
     seniority_level: str = ""
     employment_type: str = ""
