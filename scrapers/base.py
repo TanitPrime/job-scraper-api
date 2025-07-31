@@ -23,10 +23,15 @@ class Job:
 
     # Post init to automatically generate ID
     def __post_init__(self) -> None:
+        # Generate a deterministic ID based on source, source_id, company, and title
         from scrapers.base import BaseScraper
         self.id = BaseScraper.build_deterministic_id(
             [self.source, self.source_id, self.company, self.title]
         )
+        # Create scraper_control.db
+        BaseScraper.make_status()
+        # Set status to OFF
+        BaseScraper.set_status(self.source, "OFF")
 
 
 class BaseScraper(ABC):
@@ -65,3 +70,38 @@ class BaseScraper(ABC):
             return ""
         text = re.sub(r"\s+", " ", text)
         return text.strip().lower()
+    
+    @staticmethod
+    def make_status(db_path: str = "scraper_control.db") -> None:
+        """
+        Create a status table in the SQLite database if it doesn't exist.
+        This is used to track scraper activity.
+        """
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scraper_status (
+                source TEXT PRIMARY KEY,
+                status TEXT CHECK( pType IN ('ON','OFF') )   NOT NULL DEFAULT 'OFF',
+                last_run TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+    
+    @staticmethod
+    def set_status(source: str, status: str, db_path: str = "scraper_control.db") -> None:
+        """
+        Set the status of a scraper in the SQLite database.
+        """
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO scraper_status (source, status)
+            VALUES (?, ?)
+            ON CONFLICT(source) DO UPDATE SET status = ?, last_run = CURRENT_TIMESTAMP
+        """, (source, status))
+        conn.commit()
+        conn.close()
