@@ -12,5 +12,5 @@
   "industries": ".job-card-container__metadata-item:nth-child(4)",
   "applicant_count": ".job-card-container__applicant-count",
   "description": ".jobs-box__html-content",
-  "next_page": "button[aria-label=\"Next\"]"
+  "next_page": ".jobs-search-pagination__button--next"
 }
