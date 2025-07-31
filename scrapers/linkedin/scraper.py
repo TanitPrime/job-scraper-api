@@ -101,17 +101,18 @@ class LinkedInScraper(BaseScraper):
 
         seen_so_far = 0
         for _ in range(max_pages):
+            # wait for the list to be stable
+            page.wait_for_selector(LinkedInSelectors.job_card_container, state="attached")
             # Reveal all jobs
             self._scroll_to_load_all_jobs(page)
-            cards = page.locator(LinkedInSelectors.job_card_container).all()[
-                seen_so_far : seen_so_far + slice_size
-            ]
+            cards = page.locator(LinkedInSelectors.job_card_container).all()
             if not cards:
                 # Raise exception
-                raise ReLoginRequired("No job cards found, likely due to login wall or expired cookies.")
+                raise Exception("No job cards found, likely due to login wall or expired cookies.")
 
+            slice_cards = cards[:slice_size]
             slice_jobs = [
-                self._extract_single_job(card) for card in cards
+                self._extract_single_job(card) for card in slice_cards
             ]
             #---- checking if jobs were successfully scraped-----
             if slice_jobs:
@@ -176,8 +177,14 @@ class LinkedInScraper(BaseScraper):
             return
 
         for attempt in range(scroll_down_attempts):
+            time.sleep(1.5)
             page.evaluate(
                 "el => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })",
+                sidebar_element
+            )
+            time.sleep(0.5)  # Wait for the scroll to complete
+            page.evaluate(
+                "el => el.scrollTo({ bottom: el.scrollHeight, behavior: 'smooth' })",
                 sidebar_element
             )
             print(f"✅ Scrolled sidebar (attempt {attempt+1})")
