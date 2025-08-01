@@ -5,49 +5,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from scrapers.common.search_matrix import load_matrix
 from pathlib import Path
-
+from scrapers.common.scraper_control import scraper_control
 app = FastAPI()
 
 SEARCH_MATRIX_PATH = Path("scrapers/common/search_matrix.json")
 DB_PATH = "scraper_control.db"
 
-def init_db() -> None:
-    """
-    Initialize the SQLite database and create the scraper_control table if it doesn't exist.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS scraper_control (
-            name TEXT PRIMARY KEY,
-            status TEXT NOT NULL CHECK(status IN ('active', 'paused'))
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def set_scraper_status(name: str, status: str) -> None:
-    """
-    Set the status ('active' or 'paused') for a given scraper in the control table.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO scraper_control (name, status) VALUES (?, ?)", (name, status))
-    conn.commit()
-    conn.close()
-
-def get_scraper_status(name: str) -> str:
-    """
-    Get the current status of a scraper. Returns 'active' if not set.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT status FROM scraper_control WHERE name = ?", (name,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else "active"
+# Initialize the database if it doesn't exist
+scraper_control.init(DB_PATH)
 
 class SearchMatrixModel(BaseModel):
     CATEGORY_KEYWORDS: dict
@@ -119,20 +84,20 @@ def delete_search_matrix() -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/scraper/{name}/pause")
+@app.post("/scraper/pause")
 def pause_scraper(name: str) -> dict:
     """
     Pause a scraper by setting its status to 'paused'.
     """
-    set_scraper_status(name, "paused")
-    return {"status": "paused", "scraper": name}
+    scraper_control.set_control_status(name, "paused")
+    return {"status": "paused"}
 
-@app.post("/scraper/{name}/start")
+@app.post("/scraper/start")
 def start_scraper(name: str) -> dict:
     """
     Start a scraper by setting its status to 'active'.
     """
-    set_scraper_status(name, "active")
+    scraper_control(name, "active")
     return {"status": "active", "scraper": name}
 
 @app.get("/scraper/{name}/status")
@@ -140,5 +105,5 @@ def scraper_status(name: str) -> dict:
     """
     Get the current status of a scraper.
     """
-    status = get_scraper_status(name)
+    status = scraper_control.set_scraper_status(name)
     return {"scraper": name, "status": status}
