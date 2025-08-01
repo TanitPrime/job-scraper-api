@@ -2,7 +2,7 @@
 """
 LinkedIn scraper that:
 - builds one boolean query per location
-- walks pages in slices of N jobs
+- walks pages in batchs of N jobs
 - stops early when freshness or relevance thresholds are crossed
 - returns ONLY new & relevant jobs
 """
@@ -18,11 +18,10 @@ from scrapers.base import BaseScraper
 from scrapers.linkedin.models import LinkedInJob
 from scrapers.linkedin.query_builder import build_boolean_query
 from scrapers.common.browser import get_headful_driver
-from scrapers.common.selectors import LinkedInSelectors
+from scrapers.common.selectors.selectors import LinkedInSelectors
 from scrapers.common.firebase_client import get_firestore_client
-from scrapers.common.relevance import token_fuzzy
 from scrapers.common.search_matrix import load_matrix
-
+from scrapers.common.scraper_control import scraper_control
 
 
 class ReLoginRequired(Exception):
@@ -48,8 +47,7 @@ class LinkedInScraper(BaseScraper):
         self._page: Page | None = None
         self._db = get_firestore_client() # Firestore client for database operations
         self.matrix = matrix
-        self.make_status() # Create status table if it doesn't exist
-        self.set_status(self.source, "OFF") # Set initial status to OFF
+        scraper_control.set_status(self.source, "OFF") # Set initial status to OFF
 
     # ------------------------------------------------------------------
     # Browser lifecycle
@@ -75,126 +73,92 @@ class LinkedInScraper(BaseScraper):
     # ------------------------------------------------------------------
     def scrape_batch(
         self,
-        slice_size: int = 50,
+        batch_size: int = 50,
         max_pages: int = 3,
         freshness_thresh: float = 0.8,
         relevance_thresh: float = 0.3,
         delay: float = 6.0,
     ) -> List[LinkedInJob]:
-        # Set scraper status to ON
-        self.set_status(self.source, "ON")
-        page = self._start_browser()
-        all_new_jobs: List[LinkedInJob] = []
+        """
+        Scrape a batch of jobs from LinkedIn.
+        Returns a list of new LinkedInJob objects.
+        Args:
+            batch_size: Number of jobs to scrape per batch.
+            max_pages: Maximum number of pages to scrape.
+            freshness_thresh: Minimum ratio of fresh jobs to continue scraping.
+            relevance_thresh: Minimum relevance score to consider a job valid.
+            delay: Delay between page loads to avoid rate limiting.
         
-        query = build_boolean_query()
-        url = "https://www.linkedin.com/jobs/search?" + urlencode(
-            {
-                "geoId": "92000000", # Set linkedin to global to expose all jobs
-                "keywords": query, "f_JT": "F" # then filter down to locations and categories according to matrix
-            }
-        )
-        page.goto(url, timeout=50000)
-        page.wait_for_selector(
-            LinkedInSelectors.job_card_container, timeout=15000
-        )
+        Raises:
+            ReLoginRequired: If cookies are expired or login wall appears.
+        """
+        from scrapers.linkedin.page_ops import scroll_to_load_all_jobs, collect_cards, go_next
+        from scrapers.common.batch_processor import flush_batch
 
+        # Start browser and set status
+        scraper_control.set_status(self.source, "ON")
+        page = self._start_browser()
+        try:
+            # Build the boolean query and navigate to the jobs page
+            query = build_boolean_query()
+            url = "https://www.linkedin.com/jobs/search?" + urlencode(
+                {"geoId": "92000000", "keywords": query, "f_JT": "F"}
+            )
+            page.goto(url, timeout=50000)
+            # Wait for the page to load
+            page.wait_for_selector(LinkedInSelectors.job_card_container, timeout=15000)
 
-        seen_so_far = 0
-        for _ in range(max_pages):
-            # wait for the list to be stable
-            page.wait_for_selector(LinkedInSelectors.job_card_container, state="attached")
-            # Reveal all jobs
-            self._scroll_to_load_all_jobs(page)
-            cards = page.locator(LinkedInSelectors.job_card_container).all()
-            if not cards:
-                # Raise exception
-                raise Exception("No job cards found, likely due to login wall or expired cookies.")
-
-            slice_cards = cards[:slice_size]
-            slice_jobs = [
-                self._extract_single_job(card) for card in slice_cards
-            ]
-            #---- checking if jobs were successfully scraped-----
-            if slice_jobs:
-                print(f"Successfully scraped {len(slice_jobs)} jobs")
-            ids = [j.id for j in slice_jobs]
-
-            # ---- early-exit checks ----
-
-            # Grabbing existing jobs
-            refs = [self._db.collection("linkedin_jobs").document(i) for i in ids]
-            docs = self._db.get_all(refs)         
-            existing = {snap.id for snap in docs if snap.exists}
-            total_docs = self._db.collection("linked_jobs").count().get()[0][0].value
-            if total_docs == 0:
-                # fallback when db is empty
-                new_slice = slice_jobs
-            else:
-                fresh_ratio = len(existing) / len(slice_jobs)
-
-                rel_scores = [
-                    token_fuzzy(j.description, list(self.matrix["CATEGORY_KEYWORDS"].keys())) for j in slice_jobs
-                ]
-                avg_rel = sum(rel_scores) / len(rel_scores)
-
-                if fresh_ratio > freshness_thresh or avg_rel < relevance_thresh:
-                    # stop scanning further for this location
-                    print(f"Early exit: Freshness ratio {fresh_ratio} or relevance {avg_rel} below threshold.")
-                    # Set scraper status to OFF
-                    self.set_status(self.source, "OFF")
+            # Scraping starts here
+            new_jobs, batch_buffer = [], []
+            for _ in range(max_pages):
+                # Scroll to load all jobs in the sidebar
+                scroll_to_load_all_jobs(page)
+                # Collect job cards
+                cards = collect_cards(page, batch_size - len(batch_buffer))
+                if not cards:
                     break
 
-            # keep only truly new jobs
-            new_slice = [j for j in slice_jobs if j.id not in existing]
-            all_new_jobs.extend(new_slice)
+                # Extract job data from cards
+                batch_buffer.extend(
+                    self._extract_single_job(card) for card in cards
+                )
 
-            seen_so_far += len(cards)
-            time.sleep(random.uniform(delay * 0.8, delay * 1.2))
+                print("Calculating batch freshness and relevance")
+                if len(batch_buffer) >= batch_size:
+                    # Flush the batch to Firestore
+                    print(f"Flushing batch of {len(batch_buffer)} jobs")
+                    flushed = flush_batch(
+                        self.source,
+                        batch_buffer,
+                        freshness_thresh,
+                        relevance_thresh,
+                    )
+                    new_jobs.extend(flushed)
+                    batch_buffer.clear()
+                    if not flushed:  # early exit
+                        break
 
-            # next page
-            if not self._has_next_page(page):
-                # Set scraper status to OFF
-                self.set_status(self.source, "OFF")
-                break
-            self._go_next(page, timeout = 5000)
+                if not self._has_next_page(page):
+                    print("No more pages to scrape.")
+                    break
+                go_next(page, timeout=5000)
 
-        self._close_browser()
-        # Set scraper status to OFF
-        self.set_status(self.source, "OFF")
-        return all_new_jobs
+            # flush leftover
+            flushed = flush_batch(
+                self.source,
+                batch_buffer,
+                freshness_thresh,
+                relevance_thresh,
+            )
+            new_jobs.extend(flushed)
+            return new_jobs
+        finally:
+            self._close_browser()
+            scraper_control.set_status(self.source, "OFF")
 
     # ------------------------------------------------------------------
     # Page helpers
     # ------------------------------------------------------------------
-
-    def _scroll_to_load_all_jobs(self, page: Page, scroll_down_attempts: int = 15) -> None:
-        """Scrolls the job cards sidebar object until all jobs are loaded."""
-        previous_count = 0
-        # Directly select the first child div, just like your browser code
-        sidebar_element = page.locator(LinkedInSelectors.sidebar).element_handle()
-        if not sidebar_element:
-            print("❌ first div child not found")
-            return
-
-        for attempt in range(scroll_down_attempts):
-            time.sleep(1.5)
-            page.evaluate(
-                "el => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })",
-                sidebar_element
-            )
-            time.sleep(0.5)  # Wait for the scroll to complete
-            page.evaluate(
-                "el => el.scrollTo({ bottom: el.scrollHeight, behavior: 'smooth' })",
-                sidebar_element
-            )
-            print(f"✅ Scrolled sidebar (attempt {attempt+1})")
-            time.sleep(1.5)
-            cards = page.locator(LinkedInSelectors.job_card_container).all()
-            if len(cards) == previous_count:
-                print("No new jobs loaded after scrolling.")
-                break
-            previous_count = len(cards)
-
 
     def _extract_single_job(
         self, card
@@ -222,8 +186,8 @@ class LinkedInScraper(BaseScraper):
                 .strip()
             )
             # Get category by calculating relevance from JD 
-            rel_scores = {cat: token_fuzzy(desc, kw_list) for cat, kw_list in self.matrix["CATEGORY_KEYWORDS"].items()}
-            category = max(rel_scores, key=rel_scores.get)
+            from scrapers.common.classifier import classify_job
+            category = classify_job(desc)
 
             # TODO  extract tags from JD and save to list
         except Exception as e:
@@ -271,17 +235,3 @@ class LinkedInScraper(BaseScraper):
         count = page.locator(LinkedInSelectors.next_page).count()
         print(f"Next page button found: {count > 0}")
         return count > 0
-
-    @staticmethod
-    def _go_next(page: Page, timeout = 30000):
-        next_btn = page.locator(LinkedInSelectors.next_page)
-        if next_btn.count() > 0:
-            print("Clicking next page button.")
-            next_btn.click()
-            page.wait_for_selector(
-                LinkedInSelectors.job_card_container,
-                state="attached",
-                timeout=timeout
-                ) # Wait for job cards to load after clicking next     
-        else:
-            print("No next page button to click.")
