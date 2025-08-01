@@ -1,8 +1,8 @@
 from tasks.linkedin_task import run_linkedin_scraper
 
 new = run_linkedin_scraper(
-    slice_size=50,
-    max_pages=10,
+    batch_size=10,
+    max_pages=3,
     freshness_thresh=0,
     relevance_thresh=0,
     delay=2.5,
