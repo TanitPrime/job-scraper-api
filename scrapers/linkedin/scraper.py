@@ -101,9 +101,12 @@ class LinkedInScraper(BaseScraper):
         try:
             # Build the boolean query and navigate to the jobs page
             query = build_boolean_query()
-            url = "https://www.linkedin.com/jobs/search?" + urlencode(
-                {"geoId": "92000000", "keywords": query, "f_JT": "F"}
-            )
+            url = (
+                    "https://www.linkedin.com/jobs/search?" +
+                    urlencode({"geoId": "92000000", "keywords": query, "f_JT": "F"}) +
+                    "&sortBy=DD"
+                    )
+            
             page.goto(url, timeout=50000)
             # Wait for the page to load
             page.wait_for_selector(LinkedInSelectors.job_card_container, timeout=15000)
