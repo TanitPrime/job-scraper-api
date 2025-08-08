@@ -121,25 +121,25 @@ class LinkedInScraper(BaseScraper):
                 if not cards:
                     break
 
-                # Extract job data from cards
-                batch_buffer.extend(
-                    self._extract_single_job(card) for card in cards
-                )
+                # Extract jobs and flush in batches
+                for card in cards:
+                    # Extract job data from each card
+                    batch_buffer.append(self._extract_single_job(card))
 
-                print("Calculating batch freshness and relevance")
-                if len(batch_buffer) >= batch_size:
-                    # Flush the batch to Firestore
-                    print(f"Flushing batch of {len(batch_buffer)} jobs")
-                    flushed = flush_batch(
-                        self.source,
-                        batch_buffer,
-                        freshness_thresh,
-                        relevance_thresh,
-                    )
-                    new_jobs.extend(flushed)
-                    batch_buffer.clear()
-                    if not flushed:  # early exit
-                        break
+                    if len(batch_buffer) >= batch_size:
+                        # Flush the batch to Firestore
+                        print(f"Flushing batch of {len(batch_buffer)} jobs")
+                        flushed = flush_batch(
+                            self.source,
+                            batch_buffer,
+                            freshness_thresh,
+                            relevance_thresh,
+                        )
+                        new_jobs.extend(flushed)
+                        batch_buffer.clear()
+                        if not flushed:  # early exit
+                            print("No new jobs found, exiting early.")
+                            break
 
                 if not self._has_next_page(page):
                     print("No more pages to scrape.")
@@ -188,9 +188,6 @@ class LinkedInScraper(BaseScraper):
                 .inner_text()
                 .strip()
             )
-            # Get category by calculating relevance from JD 
-            from scrapers.common.classifier import classify_job
-            category = classify_job(desc)
 
             # TODO  extract tags from JD and save to list
         except Exception as e:
@@ -199,7 +196,6 @@ class LinkedInScraper(BaseScraper):
 
         return LinkedInJob(
             source=self.source,
-            category = category,
             source_id=linkedin_id,
             company=company,
             title=title,
