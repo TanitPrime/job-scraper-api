@@ -135,16 +135,22 @@ class LinkedInScraper(BaseScraper):
                             freshness_thresh,
                             relevance_thresh,
                         )
+                        # Collect new jobs
                         new_jobs.extend(flushed)
                         batch_buffer.clear()
                         if not flushed:  # early exit
-                            print("No new jobs found, exiting early.")
+                            stop_early = True
                             break
-
+                # Check if we need to stop early
+                if stop_early:               
+                    print("No new jobs found, exiting early.")
+                    break
+                # Check if we have more pages to scrape
                 if not self._has_next_page(page):
                     print("No more pages to scrape.")
                     break
-                go_next(page, timeout=5000)
+                else:
+                    go_next(page, timeout=5000)
 
             # flush leftover
             flushed = flush_batch(
