@@ -97,7 +97,7 @@ class LinkedInScraper(BaseScraper):
 
         # Start browser and set status
         scraper_control.set_status(self.source, "ON")
-        page = self._start_browser()
+        page =  self._start_browser()
         try:
             # Build the boolean query and navigate to the jobs page
             query = build_boolean_query()
@@ -113,6 +113,7 @@ class LinkedInScraper(BaseScraper):
 
             # Scraping starts here
             new_jobs, batch_buffer = [], []
+            stop_early = False
             for _ in range(max_pages):
                 # Scroll to load all jobs in the sidebar
                 scroll_to_load_all_jobs(page)
@@ -153,12 +154,15 @@ class LinkedInScraper(BaseScraper):
                     go_next(page, timeout=5000)
 
             # flush leftover
+            print(f"Flushing leftover batch of {len(batch_buffer)} jobs")
             flushed = flush_batch(
                 self.source,
                 batch_buffer,
                 freshness_thresh,
                 relevance_thresh,
             )
+            if flushed:
+                print(f"Flushed {len(flushed)} leftover jobs.")
             new_jobs.extend(flushed)
             return new_jobs
         finally:
