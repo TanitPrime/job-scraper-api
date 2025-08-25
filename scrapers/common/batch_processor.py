@@ -43,12 +43,12 @@ def flush_batch(
         if fresh_ratio > freshness_thresh or avg_rel < relevance_thresh:
             return []  # early exit signal
         new_batch = [j for j in batch_buffer if j.id not in existing]
-
+    print(f"🔍 Found {len(existing)} existing jobs, {len(new_batch)} new jobs to write.")
     # Write new jobs to Firestore
     if new_batch:
         batch = db.batch()
         for job in new_batch:
-            batch.set(db.collection(f"{source}_jobs").document(job.id), job.to_dict())
+            batch.set(db.collection(f"jobs").document(job.id), job.to_dict())
         batch.commit()
         print(f"✅ Wrote {len(new_batch)} new jobs to Firestore.")
     return new_batch
