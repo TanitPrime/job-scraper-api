@@ -14,6 +14,7 @@ def flush_batch(
     matrix = load_matrix()
 ) -> List:
     """Send new jobs to Firestore and return them."""
+    print(f"Received batch of {len(batch_buffer)} jobs to flush")
     if not batch_buffer:
         return []
     # Prepare to check existing jobs

@@ -20,7 +20,7 @@ def scroll_to_load_all_jobs(page: Page, max_attempts: int = 15) -> None:
             "el => el.scrollTo({ bottom: el.scrollHeight, behavior: 'smooth' })",
             sidebar_element
         )
-        print(f"✅ Scrolled sidebar (attempt {attempt+1})")
+        #print(f"✅ Scrolled sidebar (attempt {attempt+1})")
         time.sleep(1.5)
         curr = page.locator(LinkedInSelectors.job_card_container).count()
         if curr == prev:
