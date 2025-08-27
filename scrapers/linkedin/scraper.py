@@ -7,8 +7,8 @@ LinkedIn scraper that:
 - returns ONLY new & relevant jobs
 """
 
-import time
-import random
+from datetime import datetime, timedelta
+import re
 from typing import List
 from urllib.parse import urlencode
 
@@ -114,7 +114,7 @@ class LinkedInScraper(BaseScraper):
             # Scraping starts here
             new_jobs, batch_buffer = [], []
             stop_early = False
-            for _ in range(max_pages):
+            for _ in range(max_pages): # Loop over pages, then loop over cards (in batches) and flush and check thresholds on each batch
                 # Scroll to load all jobs in the sidebar
                 scroll_to_load_all_jobs(page)
                 # Collect job cards
@@ -130,22 +130,25 @@ class LinkedInScraper(BaseScraper):
                     if len(batch_buffer) >= batch_size:
                         # Flush the batch to Firestore
                         print(f"Flushing batch of {len(batch_buffer)} jobs")
-                        flushed = flush_batch(
+                        flushed = list(flush_batch(
                             self.source,
                             batch_buffer,
                             freshness_thresh,
                             relevance_thresh,
-                        )
+                        ))
+                        print(f"Flushed is {len(flushed)}")
                         # Collect new jobs
                         new_jobs.extend(flushed)
                         batch_buffer.clear()
-                        if not flushed:  # early exit
+                        if  len(flushed) ==0:  # early exit
                             stop_early = True
                             break
+
                 # Check if we need to stop early
                 if stop_early:               
                     print("No new jobs found, exiting early.")
                     break
+
                 # Check if we have more pages to scrape
                 if not self._has_next_page(page):
                     print("No more pages to scrape.")
@@ -173,33 +176,88 @@ class LinkedInScraper(BaseScraper):
     # Page helpers
     # ------------------------------------------------------------------
 
+    def _extract_number(self,txt):
+        """Return the first integer found in the string."""
+        m = re.search(r'(\d+)', txt)
+        if m:
+            return int(m.group(1))
+        return None
+
+    def _parse_relative_time(self,txt):
+        """
+        Turns "7 hours ago", "3 days ago", "2 weeks ago" into a yyyy/mm/dd date.
+        If nothing matches, return None.
+        """
+        txt = txt.lower()
+        now = datetime.now()
+
+        # seconds
+        m = re.search(r'(\d+)\s+second', txt)
+        if m:
+            delta = timedelta(seconds=int(m.group(1)))
+            return (now - delta).strftime("%Y/%m/%d")
+        
+        # minutes
+        m = re.search(r'(\d+)\s+minute', txt)
+        if m:
+            delta = timedelta(minutes=int(m.group(1)))
+            return (now - delta).strftime("%Y/%m/%d")
+
+        # hours
+        m = re.search(r'(\d+)\s+hour', txt)
+        if m:
+            delta = timedelta(hours=int(m.group(1)))
+            return (now - delta).strftime("%Y/%m/%d")
+
+        # days
+        m = re.search(r'(\d+)\s+day', txt)
+        if m:
+            delta = timedelta(days=int(m.group(1)))
+            return (now - delta).strftime("%Y/%m/%d")
+
+        # weeks
+        m = re.search(r'(\d+)\s+week', txt)
+        if m:
+            delta = timedelta(weeks=int(m.group(1)))
+            return (now - delta).strftime("%Y/%m/%d")
+
+        return None
+
     def _extract_single_job(
         self, card
     ) -> LinkedInJob:
         # Get linkedin internal ID
-        linkedin_id = card.get_attribute(LinkedInSelectors.job_id_attr) or ""
+        linkedin_id = card.get_attribute('data-job-id') or ""
+
         # Get title
         title = self._safe_extract(card, LinkedInSelectors.title)
+
         # Get company
         company = self._safe_extract(card,LinkedInSelectors.company)
-        # Get location
-        location = self._safe_extract(card,LinkedInSelectors.location)
-
-
+        
         # deep fetch of description
         desc = ""
         try:
             card.click()
-            card.page.wait_for_selector(
-                LinkedInSelectors.description, timeout=8000
-            )
+            
+            # Get description
             desc = (
                 card.page.locator(LinkedInSelectors.description)
                 .inner_text()
                 .strip()
             )
 
-            # TODO  extract tags from JD and save to list
+            # Get location
+            location = self._safe_extract(card,LinkedInSelectors.location)
+
+            # Get posted time delta
+            posted_at_raw = self._safe_extract(card, LinkedInSelectors.posted_at)
+            posted_at = self._parse_relative_time(posted_at_raw) or posted_at_raw
+
+            # Get applicant count
+            applicant_count_raw = self._safe_extract(card, LinkedInSelectors.applicant_count)
+            applicant_count = self._extract_number(applicant_count_raw) or applicant_count_raw            
+
         except Exception as e:
             print("Could not fetch JD", e)
             pass
@@ -212,12 +270,12 @@ class LinkedInScraper(BaseScraper):
             description=desc,
             location=location,
             url=f"https://www.linkedin.com/jobs/view/{linkedin_id}/",
-            posted_at=self._safe_extract(card, LinkedInSelectors.posted_at),
+            posted_at=posted_at,
             seniority_level=self._safe_extract(card, LinkedInSelectors.seniority),
             employment_type=self._safe_extract(card, LinkedInSelectors.emp_type),
             job_function=self._safe_extract(card, LinkedInSelectors.function),
             industries=self._safe_extract(card, LinkedInSelectors.industries),
-            applicant_count=self._safe_int(card, LinkedInSelectors.applicant_count),
+            applicant_count=applicant_count,
         )
 
     # ------------------------------------------------------------------
@@ -227,7 +285,8 @@ class LinkedInScraper(BaseScraper):
     @staticmethod
     def _safe_extract(card, sel: str) -> str:
         try:
-            return card.locator(sel).first.inner_text(timeout=1000).strip()
+            card.page.wait_for_selector(sel, timeout=2000)
+            return card.page.locator(sel).first.inner_text(timeout=1000).strip()
         except Exception:
             return ""
 

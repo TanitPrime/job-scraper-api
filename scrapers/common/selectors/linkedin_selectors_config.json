@@ -1,16 +1,16 @@
 {
   "sidebar": ".scaffold-layout__list > div",
   "job_card_container": ".job-card-container",
-  "job_id_attr": "data-control-id",
+  "job_id_attr": ".data-card-container",
   "title": ".job-card-container__link",
   "company": ".artdeco-entity-lockup__subtitle span",
-  "location": ".job-card-container__metadata-wrapper",
-  "posted_at": "time",
+  "location": ".job-details-jobs-unified-top-card__tertiary-description-container > span > span:nth-child(1)",
+  "posted_at": ".job-details-jobs-unified-top-card__tertiary-description-container > span > span:nth-child(3)",
   "seniority": ".job-card-container__metadata-item:nth-child(1)",
   "emp_type": ".job-card-container__metadata-item:nth-child(2)",
   "function": ".job-card-container__metadata-item:nth-child(3)",
   "industries": ".job-card-container__metadata-item:nth-child(4)",
-  "applicant_count": ".job-card-container__applicant-count",
+  "applicant_count": ".job-details-jobs-unified-top-card__tertiary-description-container > span > span:nth-child(5)",
   "description": ".jobs-box__html-content",
   "next_page": ".jobs-search-pagination__button--next"
 }
