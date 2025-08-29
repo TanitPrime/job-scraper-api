@@ -27,21 +27,34 @@ def run_linkedin_scraper(
     """
     def _sync():
         logger.info("LinkedIn scrape task started.")
-        # ----- gate -----------
+        
+        # Initialize database if needed
         scraper_control.init()
-        # Check if the scraper is active via scraper_control
-        if scraper_control.get_control_status("linkedin") != "active":
-            logger.info("Scraper paused via scraper_control; skipping beat.")
+        
+        # Check service status
+        service_status = scraper_control.get_service_status()
+        if service_status["status"] != "active":
+            logger.info("Scraping service is paused; skipping beat.")
             return 0
 
-        # ---- normal flow ----
+        # Get current scraper status
+        scraper_status = scraper_control.get_scraper_status("linkedin")
+        if scraper_status["status"] == "running":
+            logger.info("Scraper is already running; skipping beat.")
+            return 0
+        elif scraper_status["status"] == "paused":
+            logger.info("Scraper is paused; skipping beat.")
+            return 0
+        elif scraper_status["status"] == "error":
+            logger.warning("Previous run ended with error: %s", scraper_status["error_message"])
 
         try:
             scraper = LinkedInScraper(
                 cookies_path="secrets/cookies.json",
                 storage_path="secrets/local_storage.json",
-                proxy= None,  # Use default proxy settings
+                proxy=None,  # Use default proxy settings
             )
+            
             jobs = scraper.scrape_batch(
                 batch_size=batch_size,
                 max_pages=max_pages,
@@ -54,11 +67,18 @@ def run_linkedin_scraper(
             return len(jobs)
 
         except ReLoginRequired as exc:
-            # alert & skip beat cycle
-            logger.warning("Re-login required: %s", exc)
+            error_msg = f"Re-login required: {str(exc)}"
+            logger.warning(error_msg)
+            scraper_control.set_scraper_status("linkedin", "error", error_msg)
             # TODO: send_slack_alert(str(exc))
-            # Celery beat will simply fire again at the next schedule
             return 0
+            
+        except Exception as exc:
+            error_msg = f"Unexpected error during scraping: {str(exc)}"
+            logger.error(error_msg)
+            scraper_control.set_scraper_status("linkedin", "error", error_msg)
+            return 0
+            
     with ThreadPoolExecutor() as pool:
         return pool.submit(_sync).result()
 
