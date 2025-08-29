@@ -47,7 +47,8 @@ class LinkedInScraper(BaseScraper):
         self._page: Page | None = None
         self._db = get_firestore_client() # Firestore client for database operations
         self.matrix = matrix
-        scraper_control.set_status(self.source, "OFF") # Set initial status to OFF
+        # Initialize scraper as idle
+        scraper_control.set_scraper_status(self.source, "idle")
 
     # ------------------------------------------------------------------
     # Browser lifecycle
@@ -95,9 +96,16 @@ class LinkedInScraper(BaseScraper):
         from scrapers.linkedin.page_ops import scroll_to_load_all_jobs, collect_cards, go_next
         from scrapers.common.batch_processor import flush_batch
 
-        # Start browser and set status
-        scraper_control.set_status(self.source, "ON")
-        page =  self._start_browser()
+        # Check if service is active
+        service_status = scraper_control.get_service_status()
+        if service_status["status"] != "active":
+            scraper_control.set_scraper_status(self.source, "paused", "Service is paused")
+            return []
+
+        # Update scraper status to running
+        scraper_control.set_scraper_status(self.source, "running")
+        page = self._start_browser()
+        
         try:
             # Build the boolean query and navigate to the jobs page
             query = build_boolean_query()
@@ -118,17 +126,25 @@ class LinkedInScraper(BaseScraper):
                 # Scroll to load all jobs in the sidebar
                 scroll_to_load_all_jobs(page)
                 # Collect job cards
-                cards = collect_cards(page, batch_size - len(batch_buffer))
+                cards = page.locator(LinkedInSelectors.job_card_container).all()
                 if not cards:
                     break
 
                 # Extract jobs and flush in batches
                 for card in cards:
+                    flushed = []
+                    # Delay to avoid rate limiting
+                    page.wait_for_timeout(delay * 1000)
+
+                    # Check for login wall
+                    if page.locator(LinkedInSelectors.login_wall).count() > 0:
+                        raise ReLoginRequired("Login wall detected; cookies may be expired.")
+
                     # Extract job data from each card
                     batch_buffer.append(self._extract_single_job(card))
 
+                    # Flush the batch if it reaches the batch size
                     if len(batch_buffer) >= batch_size:
-                        # Flush the batch to Firestore
                         print(f"Flushing batch of {len(batch_buffer)} jobs")
                         flushed = list(flush_batch(
                             self.source,
@@ -137,15 +153,17 @@ class LinkedInScraper(BaseScraper):
                             relevance_thresh,
                         ))
                         print(f"Flushed is {len(flushed)}")
-                        # Collect new jobs
                         new_jobs.extend(flushed)
                         batch_buffer.clear()
-                        if  len(flushed) ==0:  # early exit
+
+                        # Early exit if no new jobs were flushed
+                        if len(flushed) == 0:
+                            print("No new jobs found in this batch, exiting early.")
                             stop_early = True
                             break
 
                 # Check if we need to stop early
-                if stop_early:               
+                if stop_early:
                     print("No new jobs found, exiting early.")
                     break
 
@@ -166,11 +184,27 @@ class LinkedInScraper(BaseScraper):
             )
             if flushed:
                 print(f"Flushed {len(flushed)} leftover jobs.")
-            new_jobs.extend(flushed)
+                new_jobs.extend(flushed)
+            
+            # Update success status and job count
+            scraper_control.update_jobs_scraped(self.source, len(new_jobs))
+            scraper_control.set_scraper_status(self.source, "idle")
             return new_jobs
+
+        except ReLoginRequired as e:
+            error_msg = "Login required: cookies may have expired"
+            print(f"Error: {error_msg}")
+            scraper_control.set_scraper_status(self.source, "error", error_msg)
+            raise
+
+        except Exception as e:
+            error_msg = f"Scraping failed: {str(e)}"
+            print(f"Error: {error_msg}")
+            scraper_control.set_scraper_status(self.source, "error", error_msg)
+            raise
+
         finally:
             self._close_browser()
-            scraper_control.set_status(self.source, "OFF")
 
     # ------------------------------------------------------------------
     # Page helpers
