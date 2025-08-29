@@ -55,3 +55,16 @@ Thumbs.db
 
 #firebase cert
 scrapers/common/smartech-108ae-firebase-adminsdk-fbsvc-34e0e4da66.json
+
+# db
+scraper_control.db
+
+# celerybeat
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+dump.rdb
+
+# job exports
+job_exports.json
+/scrapers/scripts/export_jobs_to_json.py
