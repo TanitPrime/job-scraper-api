@@ -24,19 +24,23 @@ from tasks.linkedin_task import run_linkedin_scraper
 def is_scraper_active(source: str, path = "scraper_control.db") -> bool:
     """
     Check if the scraper is marked as 'ON' in the control database.
+    Uses context manager to ensure proper connection cleanup.
     """
-    conn = sqlite3.connect(path)
-    c = conn.cursor()
-    c.execute("SELECT status FROM scraper_control WHERE source = ?", (source))
-    row = c.fetchone()
-    conn.close()
-    return row is None or row[0] == "ON"
+    try:
+        with sqlite3.connect(path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT status FROM scraper_control WHERE source = ?", (source,))  # Fixed tuple syntax
+            row = c.fetchone()
+            return row is None or row[0] == "ON"
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return False  # Fail-safe: return False if there's a database error
 
 # Optional: Celery beat schedule for periodic scraping
 app.conf.beat_schedule = {
     "run-linkedin-scraper-every-5-hours": {
         "task": 'linkedin.scraper',
-        "schedule": 5*60,  # every 5 minutes for testing change to 5*60 for production
-        "args": [10, 1, 0.8 , 0.3 , 3.5] # args: batch_size, max_pages, freshness_thresh, relevance_thresh, delay
+        "schedule": 5*60*60,  # every 5 minutes for testing change to 5*60 for production
+        "args": [20, 1, 0.8 , 0.3 , 3.5] # args: batch_size, max_pages, freshness_thresh, relevance_thresh, delay
     }
 }
