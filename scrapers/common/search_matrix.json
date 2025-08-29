@@ -1,13 +1,19 @@
 {
   "CATEGORY_KEYWORDS": {
-      "backend":   ["backend", "server", "api", "nodejs", "django", "spring"],
-      "frontend":  ["frontend", "react", "vue", "css", "javascript"],
-      "ai":        ["ai", "machine learning", "nlp", "transformers", "pytorch"],
-      "mobile":    ["mobile", "android", "ios", "flutter", "react-native"]
+    "dev": {
+      "en": ["developer", "engineer", "programmer", "software", "fullstack", "backend", "frontend", "devops", "data", "machine learning", "ml", "ai", "artificial intelligence", "mobile", "android", "ios", "flutter", "react-native"],
+      "fr": ["développeur", "ingénieur", "programmeur", "logiciel", "fullstack", "backend", "frontend", "devops", "données", "apprentissage automatique", "ml", "ia", "intelligence artificielle", "mobile", "android", "ios", "flutter", "react-native"]
+    },
+    "design": {
+      "en": ["design", "ui", "ux", "graphic", "product"],
+      "fr": ["design", "ui", "ux", "graphique", "produit"]
+    },
+    "languages": {
+      "en": ["coaching", "english", "french", "arabic", "german", "spanish", "translation"],
+      "fr": ["coaching", "anglais", "français", "arabe", "allemand", "espagnol", "traduction"]
+    }
   },
-
   "LOCATIONS":[
-      "Tunisia",
-      "France"
+    "Tunisia"
   ]
 }
